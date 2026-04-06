@@ -1,5 +1,5 @@
 # trendpulse-kotu_sree_vaishnavi
-# TrendPulse Project 📊
+# TrendPulse Project 
 
 This project analyzes trending stories using data from the Hacker News API.
 
