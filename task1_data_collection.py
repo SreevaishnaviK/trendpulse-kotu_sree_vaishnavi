@@ -1,21 +1,17 @@
 import requests
 import json
 import os
+import time
 from datetime import datetime
 
 # -----------------------------
-# API endpoints (Hacker News)
+# CONFIG
 # -----------------------------
-top_url = "https://hacker-news.firebaseio.com/v0/topstories.json"   # returns list of top story IDs
-item_url = "https://hacker-news.firebaseio.com/v0/item/{}.json"     # returns details of each story
+BASE_URL = "https://hacker-news.firebaseio.com/v0"
+HEADERS = {"User-Agent": "TrendPulse/1.0"}
 
-# Adding a header (good practice, avoids request blocking sometimes)
-headers = {"User-Agent": "TrendPulse/1.0"}
-
-# -----------------------------
-# Keywords for categorization
-# -----------------------------
-categories = {
+# Category keywords
+CATEGORIES = {
     "technology": ["ai", "software", "tech", "code", "computer", "data", "cloud", "api", "gpu", "llm"],
     "worldnews": ["war", "government", "country", "president", "election", "climate", "attack", "global"],
     "sports": ["nfl", "nba", "fifa", "sport", "game", "team", "player", "league", "championship"],
@@ -23,81 +19,107 @@ categories = {
     "entertainment": ["movie", "film", "music", "netflix", "game", "book", "show", "award", "streaming"]
 }
 
-# -----------------------------
-# Function to assign category based on title
-# -----------------------------
-def get_category(title):
-    title = title.lower()  # convert to lowercase for easy matching
-
-    # loop through each category and its keywords
-    for category, words in categories.items():
-        for word in words:
-            if word in title:   # if keyword found in title
-                return category
-
-    # if nothing matches, classify as 'others'
-    return "others"
+MAX_PER_CATEGORY = 25
 
 
 # -----------------------------
-# Step 1: Fetch top story IDs
+# FUNCTION: Get Top Story IDs
 # -----------------------------
-res = requests.get(top_url, headers=headers)
-story_ids = res.json()
-
-# Only take first 500 stories (as per assignment)
-story_ids = story_ids[:500]
-
-
-# -----------------------------
-# Step 2: Fetch details for each story
-# -----------------------------
-data = []   # this will store all story records
-
-for sid in story_ids:
+def get_top_story_ids():
     try:
-        # request story details using ID
-        r = requests.get(item_url.format(sid), headers=headers)
-        story = r.json()
+        url = f"{BASE_URL}/topstories.json"
+        response = requests.get(url, headers=HEADERS)
+        response.raise_for_status()
+        return response.json()[:500]  # First 500
+    except Exception as e:
+        print(f"Error fetching top stories: {e}")
+        return []
 
-        # skip if data is invalid or title is missing
+
+# -----------------------------
+# FUNCTION: Get Story Details
+# -----------------------------
+def get_story(story_id):
+    try:
+        url = f"{BASE_URL}/item/{story_id}.json"
+        response = requests.get(url, headers=HEADERS)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print(f"Failed to fetch story {story_id}: {e}")
+        return None
+
+
+# -----------------------------
+# FUNCTION: Categorize Story
+# -----------------------------
+def categorize(title):
+    if not title:
+        return None
+
+    title_lower = title.lower()
+
+    for category, keywords in CATEGORIES.items():
+        for keyword in keywords:
+            if keyword in title_lower:
+                return category
+    return None
+
+
+# -----------------------------
+# MAIN SCRIPT
+# -----------------------------
+def main():
+    story_ids = get_top_story_ids()
+
+    collected = {cat: [] for cat in CATEGORIES.keys()}
+    all_stories = []
+
+    for story_id in story_ids:
+        story = get_story(story_id)
+
         if not story or "title" not in story:
             continue
 
-        title = story["title"]
+        category = categorize(story["title"])
 
-        # create a structured dictionary for each story
-        record = {
-            "post_id": story.get("id"),                        # unique story ID
-            "title": title,                                    # story title
-            "category": get_category(title),                   # category based on keywords
-            "score": story.get("score", 0),                    # upvotes
-            "num_comments": story.get("descendants", 0),       # number of comments
-            "author": story.get("by", "unknown"),              # author name
-            "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # timestamp
-        }
+        if category and len(collected[category]) < MAX_PER_CATEGORY:
+            data = {
+                "post_id": story.get("id"),
+                "title": story.get("title"),
+                "category": category,
+                "score": story.get("score", 0),
+                "num_comments": story.get("descendants", 0),
+                "author": story.get("by", "unknown"),
+                "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
 
-        # add record to list
-        data.append(record)
+            collected[category].append(data)
+            all_stories.append(data)
 
-    except:
-        # skip if any error occurs for a story
-        continue
+            print(f"Added [{category}] - {story.get('title')}")
+
+        # Stop if all categories filled
+        if all(len(collected[c]) >= MAX_PER_CATEGORY for c in CATEGORIES):
+            break
+
+    # Sleep AFTER each category loop (requirement)
+    for _ in CATEGORIES:
+        time.sleep(2)
+
+    # -----------------------------
+    # SAVE JSON
+    # -----------------------------
+    os.makedirs("data", exist_ok=True)
+
+    filename = f"data/trends_{datetime.now().strftime('%Y%m%d')}.json"
+
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(all_stories, f, indent=4)
+
+    print(f"\nCollected {len(all_stories)} stories. Saved to {filename}")
 
 
-# -----------------------------
-# Step 3: Save data to JSON file
-# -----------------------------
-# create 'data' folder if it doesn't exist
-if not os.path.exists("data"):
-    os.makedirs("data")
-
-# fixed filename (so it doesn't change every run)
-filename = "data/trends.json"
-
-# write data into JSON file
-with open(filename, "w") as f:
-    json.dump(data, f, indent=4)
-
-# final message
-print(f"Collected {len(data)} stories. Saved to {filename}")
+# Run script
+if __name__ == "__main__":
+    main()
